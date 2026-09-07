@@ -17,6 +17,11 @@ class Platform(CustomEnum):
 EASY_EQUITIES_BASE_PLATFORM_URL = "https://platform.easyequities.io"
 SATRIX_BASE_PLATFORM_URL = "https://platform.satrixnow.co.za"
 
+# Login now happens on a separate OIDC identity provider ("EasyID") rather
+# than directly on the platform site - see PlatformClient.login()'s
+# docstring for the full flow.
+IDENTITY_BASE_URL = "https://identity.openeasy.io"
+
 PLATFORM_SIGN_IN_PATH = "/Account/SignIn"
 PLATFORM_ACCOUNT_OVERVIEW_PATH = "/AccountOverview"
 PLATFORM_CAN_USE_ACCOUNT_PATH = "/Menu/CanUseSelectedAccount"

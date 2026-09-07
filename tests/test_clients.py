@@ -1,4 +1,7 @@
+import pytest
+
 from easy_equities_client import constants
+from easy_equities_client.clients import MfaRequiredError
 
 
 class TestPlatformClient:
@@ -7,6 +10,40 @@ class TestPlatformClient:
     ):
         mock_success_login_response(base_platform_url)
         assert platform_client.login("username", "password") is True
+
+    def test_login_requires_mfa(
+        self, platform_client, base_platform_url, mock_mfa_login_response
+    ):
+        mock_mfa_login_response(base_platform_url)
+        with pytest.raises(MfaRequiredError):
+            platform_client.login("username", "password")
+
+    def test_verify_mfa(
+        self,
+        platform_client,
+        base_platform_url,
+        mock_mfa_login_response,
+        mock_verify_mfa_response,
+    ):
+        mfa_url = mock_mfa_login_response(base_platform_url)
+        with pytest.raises(MfaRequiredError):
+            platform_client.login("username", "password")
+        mock_verify_mfa_response(base_platform_url, mfa_url, valid_code="123456")
+        assert platform_client.verify_mfa("123456") is True
+
+    def test_verify_mfa_invalid_code(
+        self,
+        platform_client,
+        base_platform_url,
+        mock_mfa_login_response,
+        mock_verify_mfa_response,
+    ):
+        mfa_url = mock_mfa_login_response(base_platform_url)
+        with pytest.raises(MfaRequiredError):
+            platform_client.login("username", "password")
+        mock_verify_mfa_response(base_platform_url, mfa_url, valid_code="123456")
+        with pytest.raises(Exception, match="Invalid verification code"):
+            platform_client.verify_mfa("000000")
 
 
 class TestEasyEquitiesClient:

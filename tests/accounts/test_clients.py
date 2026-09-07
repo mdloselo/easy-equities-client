@@ -1,12 +1,45 @@
 import json
 from datetime import date
 
+import pytest
+
 from easy_equities_client import constants
-from easy_equities_client.accounts.clients import AccountsClient
+from easy_equities_client.accounts.clients import (
+    AccountsClient,
+    UnsupportedAccountError,
+)
 from easy_equities_client.accounts.types import Account
 
 
 class TestAccountsClient:
+    def test_switch_account(self, base_platform_url, requests_mock):
+        url = base_platform_url + constants.PLATFORM_UPDATE_CURRENCY_PATH
+        requests_mock.post(url, status_code=200, text="")
+        client = AccountsClient(base_platform_url)
+        client._switch_account("1")
+        assert client.current_account == "1"
+
+    def test_switch_account_raises_for_separate_platform(
+        self, base_platform_url, requests_mock
+    ):
+        # EasyProperties, EasyCrypto etc. appear in the account list but are
+        # hosted on an entirely separate site - "switching" to one just
+        # tells a browser to open a new tab, it doesn't select an account
+        # here.
+        url = base_platform_url + constants.PLATFORM_UPDATE_CURRENCY_PATH
+        requests_mock.post(
+            url,
+            status_code=200,
+            text='"NEWTAB-https://platform.easyproperties.co.za"',
+        )
+        client = AccountsClient(base_platform_url)
+        with pytest.raises(UnsupportedAccountError):
+            client._switch_account("10328939")
+        # Must not look like a successful switch happened - otherwise the
+        # *next* real account's holdings() would silently reuse whatever
+        # was actually selected before this call.
+        assert client.current_account is None
+
     def test_get_account_overview_page(self, base_platform_url, requests_mock):
         url = base_platform_url + constants.PLATFORM_ACCOUNT_OVERVIEW_PATH
         text = b"My Investments"

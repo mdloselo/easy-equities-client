@@ -32,10 +32,16 @@ Instruments:
 ## Usage
 
 ```python
-from easy_equities_client.clients import EasyEquitiesClient # or SatrixClient
+from easy_equities_client.clients import EasyEquitiesClient, MfaRequiredError # or SatrixClient
 
 client = EasyEquitiesClient()
-client.login(username='your username', password='your password')
+try:
+    client.login(username='your username', password='your password')
+except MfaRequiredError:
+    # EasyEquities now requires an authenticator-app (TOTP) code on every
+    # login - get the current 6-digit code from your app and complete
+    # login on the same client instance.
+    client.verify_mfa(code=input("Authenticator code: "))
 
 # List accounts
 accounts = client.accounts.list()

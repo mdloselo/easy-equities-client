@@ -24,6 +24,19 @@ from easy_equities_client.types import Client
 logger = logging.getLogger(__name__)
 
 
+class UnsupportedAccountError(Exception):
+    """
+    Raised when an "account" from AccountsClient.list() isn't actually a
+    trust account on this platform - EasyProperties, EasyCrypto, and other
+    EasyEquities-family products appear in the same account list, but are
+    hosted on entirely separate sites (their own login, their own data).
+    Switching to one doesn't select anything server-side here - it's a
+    signal meant for a browser to open a new tab - so silently proceeding
+    would leave whatever account was previously active still selected,
+    corrupting the next holdings()/valuations() call for this account_id.
+    """
+
+
 class AccountsClient(Client):
     def __init__(self, base_url: str = "", session: Session = None):
         super().__init__(base_url, session)
@@ -45,6 +58,10 @@ class AccountsClient(Client):
     def _switch_account(self, account_id: str) -> None:
         """
         Switch the currently selected account to account with ID account_id.
+
+        :raises UnsupportedAccountError: if account_id belongs to a
+            different EasyEquities-family platform (EasyProperties,
+            EasyCrypto, ...) rather than a real trust account here.
         """
         if self.current_account != account_id:
             data = {"trustAccountId": account_id}
@@ -55,6 +72,12 @@ class AccountsClient(Client):
             assert response.status_code == 200, (
                 "Update currency request should return 200 status code"
             )
+            if response.text.strip().strip('"').startswith("NEWTAB-"):
+                target = response.text.strip().strip('"')[len("NEWTAB-") :]
+                raise UnsupportedAccountError(
+                    f"Account {account_id} is hosted on a separate platform ({target}) - "
+                    "its holdings can't be fetched through this client."
+                )
             self.current_account = account_id
 
     def valuations(self, account_id: str) -> Valuation:
