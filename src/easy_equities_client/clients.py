@@ -5,7 +5,10 @@ from urllib.parse import urljoin
 from requests import Response, Session
 
 from easy_equities_client import constants
-from easy_equities_client.accounts.clients import AccountsClient
+from easy_equities_client.accounts.clients import (
+    AccountsClient,
+    EasyEquitiesAccountsClient,
+)
 from easy_equities_client.instruments.clients import InstrumentsClient
 from easy_equities_client.types import Client
 
@@ -59,9 +62,13 @@ class PlatformClient(Client):
     and https://platform.satrixnow.co.za.
     """
 
+    # Subclasses (EasyEquitiesClient) override this to plug in a richer
+    # AccountsClient without duplicating the rest of __init__.
+    accounts_client_class = AccountsClient
+
     def __init__(self, base_url, session: Session = None):
         super().__init__(base_url, session)
-        self.accounts = AccountsClient(base_url, self.session)
+        self.accounts = self.accounts_client_class(base_url, self.session)
         self.instruments = InstrumentsClient(base_url, self.session)
         self._mfa_token: str | None = None
         self._mfa_url: str | None = None
@@ -205,6 +212,10 @@ class EasyEquitiesClient(PlatformClient):
     """
     Client to interact with EasyEquities.
     """
+
+    # Tries the modern portfolio-overview REST API first, falling back to
+    # the HTML-scraping AccountsClient - see EasyEquitiesAccountsClient.
+    accounts_client_class = EasyEquitiesAccountsClient
 
     def __init__(self, base_url: str = constants.EASY_EQUITIES_BASE_PLATFORM_URL):
         return super().__init__(base_url)

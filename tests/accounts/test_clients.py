@@ -6,8 +6,10 @@ import pytest
 from easy_equities_client import constants
 from easy_equities_client.accounts.clients import (
     AccountsClient,
+    EasyEquitiesAccountsClient,
     UnsupportedAccountError,
 )
+from easy_equities_client.accounts.rest import PortfolioApiError
 from easy_equities_client.accounts.types import Account
 
 
@@ -242,3 +244,113 @@ class TestAccountsClient:
         client = AccountsClient(base_platform_url)
         result = client.transactions_for_period("1", start_date, end_date)
         assert result == expected_output
+
+
+class TestEasyEquitiesAccountsClient:
+    """EasyEquitiesAccountsClient prefers the portfolio REST API and falls
+    back to the same HTML-scraping AccountsClient already tested above -
+    these tests only cover the REST-vs-fallback wiring, not re-testing the
+    HTML scraping or REST mapping logic themselves (see test_clients.py's
+    AccountsClient tests and test_rest.py)."""
+
+    def test_list_uses_rest_api(self, base_platform_url, mocker):
+        mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            return_value={
+                "investmentAccounts": [
+                    {
+                        "accountNumber": "EE1-1",
+                        "productName": "EasyEquities ZAR",
+                        "productId": 2,
+                    }
+                ]
+            },
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        assert client.list() == [
+            Account(id="1", name="EasyEquities ZAR", trading_currency_id="2")
+        ]
+
+    def test_list_falls_back_to_html_on_rest_failure(self, base_platform_url, mocker):
+        mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            side_effect=PortfolioApiError("REST API unavailable"),
+        )
+        html_fallback = mocker.patch(
+            "easy_equities_client.accounts.clients.AccountsClient.list",
+            return_value=[Account(id="1", name="Test", trading_currency_id="1000")],
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        assert client.list() == [
+            Account(id="1", name="Test", trading_currency_id="1000")
+        ]
+        html_fallback.assert_called_once()
+
+    def test_holdings_uses_rest_api(self, base_platform_url, mocker):
+        mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            return_value={
+                "investmentAccounts": [
+                    {
+                        "accountNumber": "EE1-1",
+                        "currencySymbol": "R",
+                        "assets": [
+                            {
+                                "assetName": "Test Asset",
+                                "contractCode": "TST",
+                                "assetCode": "ZAE000000001",
+                                "purchaseValue": 100,
+                                "currentValue": 110,
+                                "currentPrice": 11,
+                                "units": 10,
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        holdings = client.holdings("1")
+        assert len(holdings) == 1
+        assert holdings[0]["name"] == "Test Asset"
+        assert holdings[0]["current_value"] == "R110.00"
+
+    def test_holdings_falls_back_to_html_on_rest_failure(
+        self, base_platform_url, mocker
+    ):
+        mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            side_effect=PortfolioApiError("REST API unavailable"),
+        )
+        html_fallback = mocker.patch(
+            "easy_equities_client.accounts.clients.AccountsClient.holdings",
+            return_value=[{"name": "HTML fallback holding"}],
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        assert client.holdings("1") == [{"name": "HTML fallback holding"}]
+        html_fallback.assert_called_once_with("1", include_shares=False)
+
+    def test_holdings_falls_back_when_account_not_in_rest_response(
+        self, base_platform_url, mocker
+    ):
+        mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            return_value={"investmentAccounts": []},
+        )
+        html_fallback = mocker.patch(
+            "easy_equities_client.accounts.clients.AccountsClient.holdings",
+            return_value=[{"name": "HTML fallback holding"}],
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        assert client.holdings("1") == [{"name": "HTML fallback holding"}]
+        html_fallback.assert_called_once()
+
+    def test_portfolio_is_cached_across_calls(self, base_platform_url, mocker):
+        rest_mock = mocker.patch(
+            "easy_equities_client.accounts.clients.fetch_portfolio_overview",
+            return_value={"investmentAccounts": []},
+        )
+        client = EasyEquitiesAccountsClient(base_platform_url)
+        client.list()
+        client.list()
+        rest_mock.assert_called_once()

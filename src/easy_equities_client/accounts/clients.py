@@ -12,6 +12,13 @@ from easy_equities_client.accounts.parsers import (
     AccountOverviewParser,
     get_transactions_from_page,
 )
+from easy_equities_client.accounts.rest import (
+    PortfolioApiError,
+    account_id_from_account_number,
+    fetch_portfolio_overview,
+    rest_account_to_account,
+    rest_assets_to_holdings,
+)
 from easy_equities_client.accounts.types import (
     Account,
     Holding,
@@ -166,3 +173,69 @@ class AccountsClient(Client):
                 ).next_sibling.next_sibling.text.strip()
                 holding["shares"] = f"{whole_shares}{partial_shares}"
         return holdings
+
+
+class EasyEquitiesAccountsClient(AccountsClient):
+    """
+    Same as AccountsClient, but tries the modern portfolio-overview REST
+    API first (see easy_equities_client.accounts.rest) - one JSON call
+    covering every EasyEquities-family account, including EasyProperties
+    and EasyCrypto, which the HTML-scraped account list can't reach at
+    all (they live on entirely separate sites). Falls back to the
+    existing HTML-scraping behavior if the REST API is unavailable for
+    any reason, so callers keep working even if EasyEquities changes or
+    restricts it.
+    """
+
+    def __init__(self, base_url: str = "", session: Session = None):
+        super().__init__(base_url, session)
+        self._portfolio_cache: Optional[dict] = None
+
+    def _portfolio(self) -> dict:
+        # Cached per instance - list() followed by holdings() for each of
+        # its accounts would otherwise redo the whole silent-reauth +
+        # token exchange + REST call every time, even though one response
+        # already has everything.
+        if self._portfolio_cache is None:
+            self._portfolio_cache = fetch_portfolio_overview(self.session)
+        return self._portfolio_cache
+
+    def list(self) -> List[Account]:
+        try:
+            portfolio = self._portfolio()
+        except PortfolioApiError as exc:
+            logger.warning(
+                f"Portfolio API unavailable, falling back to HTML scraping: {exc}"
+            )
+            return super().list()
+        return [
+            rest_account_to_account(entry)
+            for entry in portfolio.get("investmentAccounts", [])
+        ]
+
+    def holdings(self, account_id: str, include_shares: bool = False) -> List[Holding]:
+        try:
+            portfolio = self._portfolio()
+        except PortfolioApiError as exc:
+            logger.warning(
+                f"Portfolio API unavailable, falling back to HTML scraping: {exc}"
+            )
+            return super().holdings(account_id, include_shares=include_shares)
+
+        for entry in portfolio.get("investmentAccounts", []):
+            if (
+                account_id_from_account_number(entry.get("accountNumber", ""))
+                == account_id
+            ):
+                # include_shares has no REST equivalent (no per-holding
+                # detail page to fetch from) - the HTML-scraped units
+                # count is already in the mapped holding either way.
+                return rest_assets_to_holdings(entry)
+
+        # Not present in the REST response at all - shouldn't normally
+        # happen since it returns everything, but fall back rather than
+        # silently returning nothing for a real account_id.
+        logger.warning(
+            f"Account {account_id} not found in the portfolio API response, falling back to HTML scraping"
+        )
+        return super().holdings(account_id, include_shares=include_shares)
